@@ -200,6 +200,10 @@ static void cp_update_bms_ibat(void)
 	if (!ret)
 		pm_state.ibat_now = -(val.intval / 1000);
 
+	ret = power_supply_get_property(psy,
+			POWER_SUPPLY_PROP_I2C_ERROR_COUNT, &val);
+	if (!ret)
+		pm_state.bms_i2c_error_count = val.intval;
 }
 
 /* set bq27z561 fastcharge mode to enable or disabled */
@@ -247,6 +251,7 @@ static int qc3_get_batt_current_thermal_level(int *level)
 	}
 
 	pr_info("val.intval: %d\n", val.intval);
+
 	pm_state.thermal_l = val.intval;
 	*level = val.intval;
 	return rc;
@@ -759,8 +764,17 @@ static int cp_flash2_charge(unsigned int port)
 {
 	static int ibus_limit, ibat_limit;
 	int thermal_level = 0;
+	int rc = -1;
 	uint16_t effective_fcc_val = cp_get_effective_fcc_val(pm_state);
 	uint16_t effective_ibus_val = cp_get_effective_fcc_val(pm_state)/2;
+	union power_supply_propval pval = {0, };
+
+	if (pm_state.sw_psy) {
+		rc = power_supply_get_property(pm_state.sw_psy,
+					POWER_SUPPLY_PROP_SMART_BATT, &pval);
+		if (rc < 0)
+			pr_err("Get smart batt failed, rc = %d\n", rc);
+	}
 
 	qc3_get_batt_current_thermal_level(&thermal_level);
 	qc3_check_night_charging_enabled();
@@ -771,7 +785,7 @@ static int cp_flash2_charge(unsigned int port)
 	ibus_limit = min(effective_ibus_val, pm_state.ibus_lmt_curr);
 	pm_state.ibus_limits = ibus_limit;
 	pm_state.effective_ibus = effective_ibus_val;
-	pr_info("ibus_limit: %d\n", ibus_limit);
+	pr_info("ibus_limit: %d,smart_batt:%d\n", ibus_limit,pval.intval);
 
 	pr_info("vbus=%d, ibus=%d, vbat=%d, ibat=%d, ibus_target_val=%d\n",
 				pm_state.bq2597x.vbus_volt,
@@ -820,7 +834,7 @@ static int cp_flash2_charge(unsigned int port)
 		&& pm_state.bq2597x.ibus_curr < ibus_limit
 		&& !pm_state.bq2597x.bus_ocp_alarm
 		&& !pm_state.bq2597x.bus_ovp_alarm
-		&& pm_state.bq2597x.vbat_volt < sys_config.bat_volt_lp_lmt - 50
+		&& pm_state.bq2597x.vbat_volt < sys_config.bat_volt_lp_lmt - 50 - pval.intval
 		&& pm_state.bq2597x.ibat_curr < sys_config.bat_curr_lp_lmt
 		&& pm_state.usb_type == POWER_SUPPLY_TYPE_USB_HVDCP_3P5)
 
@@ -830,7 +844,7 @@ static int cp_flash2_charge(unsigned int port)
 		&& pm_state.bq2597x.ibus_curr < ibus_limit - 300
 		&& !pm_state.bq2597x.bus_ocp_alarm
 		&& !pm_state.bq2597x.bus_ovp_alarm
-		&& pm_state.bq2597x.vbat_volt < sys_config.bat_volt_lp_lmt - 50
+		&& pm_state.bq2597x.vbat_volt < sys_config.bat_volt_lp_lmt - 50 - pval.intval
 		&& pm_state.bq2597x.ibat_curr < sys_config.bat_curr_lp_lmt - 600)
 
 		cp_tune_vbus_volt(VOLT_UP);
@@ -838,7 +852,7 @@ static int cp_flash2_charge(unsigned int port)
 	if (pm_state.bq2597x.bus_ocp_alarm
 		|| pm_state.bq2597x.bus_ovp_alarm
 		|| pm_state.bq2597x.vbat_reg
-		|| pm_state.bq2597x.vbat_volt > sys_config.bat_volt_lp_lmt
+		|| pm_state.bq2597x.vbat_volt > sys_config.bat_volt_lp_lmt - pval.intval
 		|| pm_state.bq2597x.ibat_curr > sys_config.bat_curr_lp_lmt + 500
 		|| pm_state.bq2597x.ibus_curr > ibus_limit + 310) {
 
@@ -858,14 +872,14 @@ static int cp_flash2_charge(unsigned int port)
 		return -ADC_ERR;
 	else if (pm_state.night_charging) {
 		pr_info("night charging feature is enabled!\n");
-		return CP_ENABLE_FAIL; 
+		return CP_ENABLE_FAIL;
 	} else if (thermal_level >= MAX_THERMAL_LEVEL
-			|| pm_state.is_temp_out_fc2_range) {
-		pr_info("thermal level too high or batt temp is out of fc2 range\n");
+			|| pm_state.is_temp_out_fc2_range || pm_state.bms_i2c_error_count) {
+		pr_info("thermal level too high or batt temp is out of fc2 range or bms i2c error!\n");
 		return CP_ENABLE_FAIL;
 	}
 
-	if (pm_state.bq2597x.vbat_volt > sys_config.bat_volt_lp_lmt - 100 &&
+	if (pm_state.bq2597x.vbat_volt > sys_config.bat_volt_lp_lmt - 100 - pval.intval &&
 			pm_state.bq2597x.ibat_curr < sys_config.fc2_taper_current) {
 		if (fc2_taper_timer++ > TAPER_TIMEOUT) {
 			fc2_taper_timer = 0;
@@ -914,6 +928,8 @@ void cp_statemachine(unsigned int port)
 	int thermal_level = 0;
 	static bool recovery;
 	static int cp_enable_fail_count;
+	union power_supply_propval pval = {0, };
+	int rc = -1;
 
 	if (!pm_state.bq2597x.vbus_pres) {
 		pm_state.state = CP_STATE_DISCONNECT;
@@ -927,6 +943,14 @@ void cp_statemachine(unsigned int port)
 		pm_state.is_temp_out_fc2_range = false;
 		cp_set_fake_hvdcp3(false);
 		cp_move_state(CP_STATE_ENTRY);
+	}
+
+	if (pm_state.sw_psy) {
+		rc = power_supply_get_property(pm_state.sw_psy,
+					POWER_SUPPLY_PROP_SMART_BATT, &pval);
+		if (rc < 0)
+			pr_err("Get smart batt failed, rc = %d\n", rc);
+		pr_info("smart_batt:%d\n",pval.intval);
 	}
 
 	switch (pm_state.state) {
@@ -980,7 +1004,7 @@ void cp_statemachine(unsigned int port)
 				pr_info("thermal too high or batt temp out of range or slowly charging, waiting...\n");
 			} else if (pm_state.bq2597x.vbat_volt < sys_config.min_vbat_start_flash2)
 				cp_move_state(CP_STATE_SW_ENTRY);
-			else if (pm_state.bq2597x.vbat_volt > sys_config.bat_volt_lp_lmt - 100
+			else if (pm_state.bq2597x.vbat_volt > sys_config.bat_volt_lp_lmt - 100 - pval.intval
 					|| pm_state.capacity >= HIGH_CAPACITY_TRH) {
 				pm_state.sw_near_cv = true;
 				cp_move_state(CP_STATE_SW_ENTRY);
@@ -1029,7 +1053,7 @@ void cp_statemachine(unsigned int port)
 			pr_info("thermal(%d) too high or batt temp out of range\n", thermal_level);
 		}
 		cp_get_batt_capacity();
-		if (pm_state.bq2597x.vbat_volt > sys_config.bat_volt_lp_lmt - 100
+		if (pm_state.bq2597x.vbat_volt > sys_config.bat_volt_lp_lmt - 100 - pval.intval
 					|| pm_state.capacity >= HIGH_CAPACITY_TRH) {
 				pm_state.sw_near_cv = true;
 		} else {
