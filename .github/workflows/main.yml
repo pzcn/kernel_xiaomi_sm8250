@@ -1,0 +1,37 @@
+# This is a basic workflow to help you get started with Actions
+
+name: KernelSU-CI
+
+on:
+  workflow_dispatch:
+    inputs:
+      DEVICE:
+        description: 'devices'     
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      # Runs a set of commands using the runners shell
+      - name: Run a multi-line script
+        run: |
+            sudo apt-get update && sudo apt-get install -y bison build-essential bc bison curl libssl-dev git zip python2 python3 flex cpio libncurses5-dev wget
+            chmod +x ./script/setup
+            chmod +x ./script/build-kernel
+            curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
+            ./script/setup --aosp-clang
+            ./script/build-kernel --aosp-clang
+        env:
+          TYPE: NEXT-0x00
+          DEVICE: ${{ github.event.inputs.DEVICE }}
+          KBUILD_BUILD_USER: tsavTheCunt
+          KBUILD_BUILD_HOST: CuntsSpace
+          
+      - name: Upload a Build Artifact
+        uses: actions/upload-artifact@v3.1.1
+        with:
+          name: ${{ github.event.inputs.DEVICE }}
+          path: output 
