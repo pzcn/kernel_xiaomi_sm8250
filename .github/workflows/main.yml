@@ -21,7 +21,7 @@ jobs:
             sudo apt-get update && sudo apt-get install -y bison build-essential bc bison curl libssl-dev git zip python2 python3 flex cpio libncurses5-dev wget
             chmod +x ./script/setup
             chmod +x ./script/build-kernel
-            curl -LSs "https://raw.githubusercontent.com/pzcn/KernelSU/main/kernel/setup.sh" | bash -
+            curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
             ./script/setup --aosp-clang
             ./script/build-kernel --aosp-clang
         env:
