@@ -85,6 +85,6 @@ obj-$(CONFIG_CHARGER_TPS65217)	+= tps65217_charger.o
 obj-$(CONFIG_AXP288_FUEL_GAUGE) += axp288_fuel_gauge.o
 obj-$(CONFIG_AXP288_CHARGER)	+= axp288_charger.o
 obj-$(CONFIG_CHARGER_CROS_USBPD)	+= cros_usbpd-charger.o
-obj-$(CONFIG_ARCH_QCOM)		+= qcom/
+obj-$(CONFIG_ARCH_QCOM)		+= cas_qcom/
 obj-$(CONFIG_BOARD_XIAOMI)	+= ti/
 obj-$(CONFIG_BOARD_XIAOMI)	+= maxim/
